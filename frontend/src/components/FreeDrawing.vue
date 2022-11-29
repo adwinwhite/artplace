@@ -52,8 +52,8 @@ function getBrush(id) {
 
 function onBrushColorChange(event) {
   const brush = {
+    width: getBrush(myid).width,
     pencil: {
-      width: getBrush(myid).width,
       color: event.target.value,
     },
   };
@@ -281,6 +281,9 @@ onMounted(() => {
   can.value.width = 400;
   can.value.height = 400;
   ctx = can.value.getContext('2d');
+
+  can.value.addEventListener("touchmove", (e)=>{ e.preventDefault(); }, {passive: false});
+  can.value.addEventListener("touchstart", (e)=>{ e.preventDefault(); }, {passive: false});
   // // init protobuf and websocket.
   initProtobuf();
   connectWs();
