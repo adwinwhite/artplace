@@ -5,12 +5,12 @@ package artplace.messages;
 
 message Brush {
     message PencilBrush {
-        required uint32 width = 1;
-        required string color = 2;
+        required string color = 1;
     }
 
+    required uint32 width = 1;
     oneof brushKind {
-        PencilBrush pencil = 1;
+        PencilBrush pencil = 2;
     }
 }
 

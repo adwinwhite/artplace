@@ -1,13 +1,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUpdate } from 'vue';
-import { fabric } from 'fabric';
 import * as protobuf from 'protobufjs';
 import { Buffer } from 'buffer';
-import Long from 'long';
 
-let brushColor = ref('#000000');
-let brushWidth = ref(2);
 let myroom = ref('');
+const can = ref(null);
+let ctx = null;
 
 let initDone = false;
 let isMouseDown = false;
@@ -15,11 +13,11 @@ let isMouseDown = false;
 let socket = null;
 let myid = null;
 /* let myroom = null; */
-let screenCanvas = null;
 let points = [];
 
-// id -> fabric.brush.
+// id -> brushKind.
 let playersBrushes = new Map();
+const prevPoints = new Map();
 let brushStack = [];
 
 let ClientMessage = null;
@@ -32,41 +30,20 @@ let SetBrush = null;
 let Movement = null;
 let Pos = null;
 
-
-function saveBrush(canvas) {
-  brushStack.push(canvas.freeDrawingBrush);
-}
-
-function restoreBrush(canvas) {
-  canvas.freeDrawingBrush = brushStack.pop();
-}
-
-function kind2brush(kind) {
-  var brush = null;
-  if (kind.pencil) {
-    brush = new fabric.PencilBrush(screenCanvas);
-    brush.color = kind.pencil.color;
-    brush.width = kind.pencil.width;
-    brush.kind = kind;
-  }
-  return brush;
-}
-
-function createDefaultBrush(canvas) {
-  const kind = {
+function createDefaultBrush() {
+  const brush = {
+    width: 1,
     pencil: {
-      width: 1,
       color: "#000000"
     }
   }
-  const brush = kind2brush(kind);
   return brush;
 }
 
 function getBrush(id) {
   let brush = playersBrushes.get(id);
   if (!brush) {
-    brush = createDefaultBrush(screenCanvas);
+    brush = createDefaultBrush();
     playersBrushes.set(id, brush);
   }
   return brush;
@@ -74,14 +51,16 @@ function getBrush(id) {
 
 
 function onBrushColorChange(event) {
+  const brush = {
+    pencil: {
+      width: getBrush(myid).width,
+      color: event.target.value,
+    },
+  };
+
   const setBrush = {
     id: myid,
-    brush: {
-      pencil: {
-        width: getBrush(myid).width,
-        color: brushColor.value,
-      },
-    },
+    brush: brush
   };
   const clientMessage = {
     setBrush: setBrush,
@@ -90,20 +69,20 @@ function onBrushColorChange(event) {
     ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
   );
 
-  const brush = kind2brush(setBrush.brush);
   playersBrushes.set(myid, brush);
-  screenCanvas.freeDrawingBrush = brush;
 }
 
 function onBrushWidthChange(event) {
+  const brush = {
+    width: event.target.valueAsNumber,
+    pencil: {
+      color: getBrush(myid).pencil.color,
+    },
+  };
+
   const setBrush = {
     id: myid,
-    brush: {
-      pencil: {
-        width: parseInt(brushWidth.value),
-        color: getBrush(myid).color,
-      },
-    },
+    brush: brush
   };
   const clientMessage = {
     setBrush: setBrush,
@@ -112,9 +91,7 @@ function onBrushWidthChange(event) {
     ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
   );
 
-  const brush = kind2brush(setBrush.brush);
   playersBrushes.set(myid, brush);
-  screenCanvas.freeDrawingBrush = brush;
 }
 
 function onRoomChange(event) {
@@ -167,7 +144,6 @@ function connectWs() {
 }
 
 function initProtobuf() {
-  protobuf.util.Long = Long;
   let protoFile = './messages.proto';
   protobuf.load(protoFile, function (err, root) {
     if (err) throw err;
@@ -185,37 +161,42 @@ function initProtobuf() {
   });
 }
 
-function setBrush(canvas, brush) {
-  canvas.isDrawingMode = true;
-  canvas.freeDrawingBrush = brush;
+function setBrush(canvasContext, brush) {
+  if (brush.pencil) {
+    canvasContext.lineWidth = brush.width;
+    canvasContext.lineCap = 'round';
+    canvasContext.strokeStyle = brush.pencil.color;
+  }
 }
 
-let options = { e: { 
-                  pointerId: 1,
-                  /* isPrimary: true */
-                }};
 
 function pointDrawer(movement) {
-  /* console.log('Drawing for someone using the brush: '); */
-  /* console.log(brush); */
-  saveBrush(screenCanvas);
-  const brush = getBrush(movement.id);
-  setBrush(brush.canvas, brush);
-  if (movement.kind == 1) {
-    brush.onMouseMove(movement.point, options);
+  if (movement.kind == 1 || movement.kind == 2) {
+    // pointer:move or up
+    ctx.save();
+
+    const brush = getBrush(movement.id);
+    setBrush(ctx, brush);
+    const prevPoint = prevPoints.get(movement.id);
+    ctx.beginPath();
+    ctx.moveTo(prevPoint.x, prevPoint.y);
+    ctx.lineTo(movement.point.x, movement.point.y);
+    ctx.stroke();
+
+    ctx.restore();
   } else if (movement.kind == 0) {
-    brush.onMouseDown(movement.point, options);
-  } else if (movement.kind == 2) {
-    console.log(options);
-    brush.onMouseUp(options);
+    // pointer:down
+    // support drawing single dot 
   }
-  restoreBrush(screenCanvas);
+  prevPoints.set(movement.id, movement.point);
 }
 
 function handleClientMessage(msg) {
   if (msg.initClient) {
-    screenCanvas.remove(...screenCanvas.getObjects());
-    screenCanvas.renderAll();
+    // Clear the canvas
+    ctx.clearRect(0, 0, can.value.width, can.value.height);
+    // Rerender?
+
     playersBrushes = new Map();
     myid = msg.initClient.id;
     myroom.value = msg.initClient.room;
@@ -225,7 +206,7 @@ function handleClientMessage(msg) {
     // set my brush for this room
     const setBrush = {
       id: myid,
-      brush: screenCanvas.freeDrawingBrush.kind 
+      brush: getBrush(myid)
     };
     const clientMessage = {
       setBrush: setBrush,
@@ -237,30 +218,29 @@ function handleClientMessage(msg) {
     // after initialization, allow drawing.
     initDone = true;
   } else if (msg.setBrush) {
-    const brush = kind2brush(msg.setBrush.brush);
-    playersBrushes.set(msg.setBrush.id, brush);
+    playersBrushes.set(msg.setBrush.id, msg.setBrush.brush);
   } else if (msg.movement) {
-    if (myid != msg.movement.id) {
-      pointDrawer(msg.movement);
-    }
+    /* if (myid != msg.movement.id) { */
+    pointDrawer(msg.movement);
+    /* } */
   } else if (msg.joinRoom) {
   }
 }
 
-function sendMovement(options, moveKind) {
+function sendMovement(pointerEvent) {
   let kind = null;
-  if (moveKind == 'down') {
+  if (pointerEvent.type == 'pointerdown') {
     kind = 0;
-  } else if (moveKind == 'move') {
+  } else if (pointerEvent.type == 'pointermove') {
     kind = 1;
-  } else if (moveKind == 'up') {
+  } else if (pointerEvent.type == 'pointerup') {
     kind = 2;
   }
   const movement = {
     id: myid,
     point: {
-      x: options.pointer.x,
-      y: options.pointer.y
+      x: pointerEvent.offsetX,
+      y: pointerEvent.offsetY
     },
     kind: kind
   };
@@ -272,36 +252,35 @@ function sendMovement(options, moveKind) {
   );
 }
 
+function onPointerDown(event) {
+  console.log(event);
+  if (initDone) {
+    isMouseDown = true;
+
+    // send message
+    sendMovement(event);
+  }
+}
+
+function onPointerMove(event) {
+  if (initDone && isMouseDown) {
+    // send message
+    sendMovement(event);
+  }
+}
+
+function onPointerUp(event) {
+  if (initDone && isMouseDown) {
+    // send message
+    sendMovement(event);
+  }
+  isMouseDown = false;
+}
+
 onMounted(() => {
-  screenCanvas = new fabric.Canvas('can', {
-    width: 400,
-    height: 400,
-    isDrawingMode: true,
-  });
-  screenCanvas.freeDrawingBrush = createDefaultBrush(screenCanvas);
-  screenCanvas.on('mouse:down', function (options) {
-    if (initDone) {
-      isMouseDown = true;
-      screenCanvas.isDrawingMode = true;
-
-      // send message
-      sendMovement(options, "down");
-    }
-  });
-  screenCanvas.on('mouse:move', function (options) {
-    if (initDone && isMouseDown) {
-      // send message
-      sendMovement(options, "move");
-    }
-  });
-  screenCanvas.on('mouse:up', (options) => {
-    if (initDone && isMouseDown) {
-      // send message
-      sendMovement(options, "up");
-    }
-    isMouseDown = false;
-  });
-
+  can.value.width = 400;
+  can.value.height = 400;
+  ctx = can.value.getContext('2d');
   // // init protobuf and websocket.
   initProtobuf();
   connectWs();
@@ -317,11 +296,10 @@ onBeforeUpdate(() => {
 <template>
   <p>Can you see me?</p>
   <form onsubmit="return false">
-    <input type="color" v-model="brushColor" @change="onBrushColorChange" />
+    <input type="color"  @change="onBrushColorChange" />
     <label for="brush-width">Brush Width:</label>
     <input
       id="brush-width"
-      v-model="brushWidth"
       type="range"
       min="1"
       max="100"
@@ -336,7 +314,12 @@ onBeforeUpdate(() => {
       @change="onRoomChange"
     />
   </form>
-  <canvas id="can" style="border: 1px solid #ccc"></canvas>
+  <canvas ref="can" 
+    @pointerdown="onPointerDown" 
+    @pointermove="onPointerMove" 
+    @pointerup="onPointerUp" 
+    style="border: 1px solid #ccc">
+  </canvas>
   <p>Where is my canvas?</p>
 </template>
 
