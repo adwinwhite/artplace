@@ -1,0 +1,69 @@
+syntax = "proto2";
+
+package artplace.messages;
+
+
+message Brush {
+    message PencilBrush {
+        required uint32 width = 1;
+        required string color = 2;
+    }
+
+    oneof brushKind {
+        PencilBrush pencil = 1;
+    }
+}
+
+// message string {
+    // required uint64 first = 1;
+    // required uint64 second = 2;
+// }
+
+message SetBrush {
+    required string id = 1;
+    required Brush brush = 2;
+}
+
+message Movement {
+    message Pos {
+        required double x = 1;
+        required double y = 2;
+    }
+    enum MoveKind {
+        BRUSH_DOWN = 0;
+        BRUSH_MOVE = 1;
+        BRUSH_UP = 2;
+    }
+
+    required string id = 1;
+    required Pos point = 2;
+    required MoveKind kind = 3;
+}
+
+message JoinRoom {
+    required string id = 1;
+    required string room = 2;
+}
+
+// message Snapshot {
+    // bytes bitmap = 1;
+    // map<string, Brush> brushes = 2;
+    // uint64 nextIndex = 3;
+// }
+
+message ClientMessage {
+    oneof messageKinds {
+        SetBrush setBrush = 1;
+        Movement movement = 2;
+        // Snapshot snapshot = 3;
+        InitClient initClient = 3;
+        JoinRoom joinRoom = 4;
+    }
+}
+
+
+message InitClient {
+    required string id = 1;
+    required string room = 2;
+    repeated ClientMessage messages = 3;
+}

@@ -1,0 +1,22 @@
+[package]
+name = "artplace"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+actix = "0.13.0"
+actix-web = "4.2.1"
+actix-files = "0.6.2"
+actix-web-actors = "4.1.0"
+log = "0.4.17"
+uuid = { version = "1.2.2", features = ["v4", "fast-rng", "serde" ] }
+bincode = { version = "2.0.0-rc.2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+env_logger = "0.9"
+prost = "0.11"
+bytes = "1"
+rand = "0.8"
+
+[build-dependencies]
+prost-build = "0.11"

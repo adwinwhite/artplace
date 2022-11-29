@@ -1,0 +1,23 @@
+{
+  "name": "vite-vue-starter",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@volar/vue-language-server": "^1.0.9",
+    "buffer": "^6.0.3",
+    "fabric": "^5.2.4",
+    "long": "^5.2.1",
+    "protobufjs": "^7.1.2",
+    "vue": "^3.2.45"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^3.2.0",
+    "vite": "^3.2.4"
+  }
+}
