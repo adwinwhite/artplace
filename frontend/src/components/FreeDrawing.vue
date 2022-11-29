@@ -220,32 +220,37 @@ function handleClientMessage(msg) {
   } else if (msg.setBrush) {
     playersBrushes.set(msg.setBrush.id, msg.setBrush.brush);
   } else if (msg.movement) {
-    /* if (myid != msg.movement.id) { */
-    pointDrawer(msg.movement);
-    /* } */
+    // use local rendering to reduce tangible latency. (Will cause conflicts, different results shown to different drawers).
+    if (myid != msg.movement.id) {
+      pointDrawer(msg.movement);
+    }
   } else if (msg.joinRoom) {
   }
 }
 
-function sendMovement(pointerEvent) {
+function pointerEvent2movement(event) {
   let kind = null;
-  if (pointerEvent.type == 'pointerdown') {
+  if (event.type == 'pointerdown') {
     kind = 0;
-  } else if (pointerEvent.type == 'pointermove') {
+  } else if (event.type == 'pointermove') {
     kind = 1;
-  } else if (pointerEvent.type == 'pointerup') {
+  } else if (event.type == 'pointerup') {
     kind = 2;
   }
   const movement = {
     id: myid,
     point: {
-      x: pointerEvent.offsetX,
-      y: pointerEvent.offsetY
+      x: event.offsetX,
+      y: event.offsetY
     },
     kind: kind
   };
+  return movement;
+}
+
+function sendMovement(movement) {
   const clientMessage = {
-    movement: movement,
+    movement: movement
   };
   socket.send(
     ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
@@ -258,21 +263,27 @@ function onPointerDown(event) {
     isMouseDown = true;
 
     // send message
-    sendMovement(event);
+    const movement = pointerEvent2movement(event);
+    sendMovement(movement);
+    pointDrawer(movement);
   }
 }
 
 function onPointerMove(event) {
   if (initDone && isMouseDown) {
     // send message
-    sendMovement(event);
+    const movement = pointerEvent2movement(event);
+    sendMovement(movement);
+    pointDrawer(movement);
   }
 }
 
 function onPointerUp(event) {
   if (initDone && isMouseDown) {
     // send message
-    sendMovement(event);
+    const movement = pointerEvent2movement(event);
+    sendMovement(movement);
+    pointDrawer(movement);
   }
   isMouseDown = false;
 }
