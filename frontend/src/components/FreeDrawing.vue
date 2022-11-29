@@ -7,13 +7,14 @@ import Long from 'long';
 
 let brushColor = ref('#000000');
 let brushWidth = ref(2);
+let myroom = ref('');
 
 let initDone = false;
 let isMouseDown = false;
 /** @type {WebSocket | null} */
 let socket = null;
 let myid = null;
-let myroom = null;
+/* let myroom = null; */
 let screenCanvas = null;
 let points = [];
 
@@ -117,7 +118,6 @@ function onBrushWidthChange(event) {
 }
 
 function onRoomChange(event) {
-  console.log('event text', event.target.value);
   const joinRoom = {
     id: myid,
     room: event.target.value,
@@ -218,7 +218,7 @@ function handleClientMessage(msg) {
     screenCanvas.renderAll();
     playersBrushes = new Map();
     myid = msg.initClient.id;
-    myroom = msg.initClient.room;
+    myroom.value = msg.initClient.room;
     console.log('I have id: ', myid);
     msg.initClient.messages.forEach((m) => handleClientMessage(m));
 
@@ -331,7 +331,7 @@ onBeforeUpdate(() => {
     <input
       id="room"
       type="text"
-      placeholder="Room"
+      :placeholder="myroom"
       maxlength="16"
       @change="onRoomChange"
     />
