@@ -100,7 +100,7 @@ function onBrushWidthChange(event) {
     id: myid,
     brush: {
       pencil: {
-        width: brushWidth.value,
+        width: parseInt(brushWidth.value),
         color: getBrush(myid).color,
       },
     },
