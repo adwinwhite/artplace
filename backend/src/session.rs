@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use crate::server;
 use artplace::messages;
-use artplace::messages::client_message::MessageKinds;
+use artplace::messages::client_message::MessageKind;
 
 use actix::prelude::*;
 use actix_web_actors::ws;
@@ -19,7 +19,7 @@ pub struct WsClientSession {
     /// unique session id
     // pub id: messages::Uid,
     pub id: String,
-    pub room: String,
+    pub room_id: String,
 
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
@@ -42,7 +42,7 @@ impl WsClientSession {
                 // notify chat server
                 act.server.do_send(server::Disconnect {
                     id: act.id.clone(),
-                    room: act.room.clone(),
+                    room_id: act.room_id.clone(),
                 });
 
                 // stop actor
@@ -83,9 +83,9 @@ impl Actor for WsClientSession {
             .then(|res, act, ctx| {
                 match res {
                     Ok(init_client) => {
-                        act.room = init_client.room.clone();
+                        act.room_id = init_client.room_id.clone();
                         let client_message = messages::ClientMessage {
-                            message_kinds: Some(MessageKinds::InitClient(init_client)),
+                            message_kind: Some(MessageKind::InitClient(init_client)),
                         };
                         // println!("{:#?}", client_message);
                         let bytes = client_message.encode_to_vec();
@@ -108,7 +108,7 @@ impl Actor for WsClientSession {
         // notify chat server
         self.server.do_send(server::Disconnect {
             id: self.id.clone(),
-            room: self.room.clone(),
+            room_id: self.room_id.clone(),
         });
         Running::Stop
     }
@@ -146,23 +146,23 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
             ws::Message::Text(_) => println!("Unexpected text"),
             ws::Message::Binary(bin) => match messages::ClientMessage::decode(bin) {
                 Ok(client_msg) => {
-                    log::info!("received client message: {:#?}", client_msg);
-                    if let Some(messages::client_message::MessageKinds::JoinRoom(join_room)) =
-                        &client_msg.message_kinds
+                    // log::info!("received client message: {:#?}", client_msg);
+                    if let Some(messages::client_message::MessageKind::JoinRoom(join_room)) =
+                        &client_msg.message_kind
                     {
                         self.server
                             .send(server::Join {
                                 id: self.id.clone(),
-                                old: self.room.clone(),
-                                new: join_room.room.clone(),
+                                old: self.room_id.clone(),
+                                new: join_room.room_id.clone(),
                             })
                             .into_actor(self)
                             .then(|res, act, ctx| {
                                 match res {
                                     Ok(init_client) => {
-                                        act.room = init_client.room.clone();
+                                        act.room_id = init_client.room_id.clone();
                                         let client_message = messages::ClientMessage {
-                                            message_kinds: Some(MessageKinds::InitClient(
+                                            message_kind: Some(MessageKind::InitClient(
                                                 init_client,
                                             )),
                                         };
@@ -176,7 +176,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                             .wait(ctx);
                     }
                     self.server.do_send(server::OverlayClientMessage {
-                        room: self.room.clone(),
+                        room: self.room_id.clone(),
                         msg: client_msg,
                     });
                 }
@@ -185,6 +185,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                 }
             },
             ws::Message::Close(reason) => {
+                log::info!("Client {} disconnected for reason: {:#?}", self.id, reason);
                 ctx.close(reason);
                 ctx.stop();
             }

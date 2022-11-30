@@ -24,11 +24,12 @@ message SetBrush {
     required Brush brush = 2;
 }
 
+message Pos {
+    required double x = 1;
+    required double y = 2;
+}
+
 message Movement {
-    message Pos {
-        required double x = 1;
-        required double y = 2;
-    }
     enum MoveKind {
         BRUSH_DOWN = 0;
         BRUSH_MOVE = 1;
@@ -42,28 +43,41 @@ message Movement {
 
 message JoinRoom {
     required string id = 1;
-    required string room = 2;
+    required string roomId = 2;
 }
 
-// message Snapshot {
-    // bytes bitmap = 1;
-    // map<string, Brush> brushes = 2;
-    // uint64 nextIndex = 3;
-// }
+message Snapshot {
+    required bytes bitmap = 1;
+    map<string, Brush> brushes = 2;
+    map<string, Pos> prevPoints = 3;
+    optional string roomOwner = 4;
+    required uint64 nextLogIndex = 5;
+}
 
+message OwnerCandidate {
+    required string id = 1;
+    required string roomId = 2;
+    required bool chosen = 3;
+}
+
+// InitClient and Snapshot won't be logged.
 message ClientMessage {
-    oneof messageKinds {
+    oneof messageKind {
         SetBrush setBrush = 1;
         Movement movement = 2;
-        // Snapshot snapshot = 3;
+        // Only sent by server.
         InitClient initClient = 3;
         JoinRoom joinRoom = 4;
+        // Server only sends snapshot included in initClient.
+        Snapshot snapshot = 5;
+        OwnerCandidate ownerCandidate = 6;
     }
 }
 
 
 message InitClient {
     required string id = 1;
-    required string room = 2;
-    repeated ClientMessage messages = 3;
+    required string roomId = 2;
+    optional Snapshot snapshot = 3;
+    repeated ClientMessage log = 4;
 }

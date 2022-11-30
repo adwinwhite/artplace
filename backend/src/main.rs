@@ -15,6 +15,7 @@ mod server;
 mod session;
 // use artplace::messages;
 // use self::server::MyWebSocket;
+const MAX_FRAME_SIZE: usize = 4 * usize::pow(2, 20); // 4MB
 
 
 /// Entry point for our websocket route
@@ -23,7 +24,7 @@ async fn accept_client(
     stream: web::Payload,
     srv: web::Data<Addr<server::OverlayServer>>,
 ) -> Result<HttpResponse, Error> {
-    ws::start(
+    ws::WsResponseBuilder::new(
         session::WsClientSession {
             id: {
                 // let uuid_u64_pair = Uuid::new_v4().as_u64_pair();
@@ -37,13 +38,14 @@ async fn accept_client(
                 // }
                 Uuid::new_v4().as_hyphenated().to_string()
             },
-            room: "".to_owned(),
+            room_id: "".to_owned(),
             hb: Instant::now(),
             server: srv.get_ref().clone(),
         },
-        &req,
-        stream,
-    )
+        &req, 
+        stream)
+    .frame_size(MAX_FRAME_SIZE)
+    .start()
 }
 
 #[derive(Deserialize)]

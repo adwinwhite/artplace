@@ -2,6 +2,16 @@
 import { ref, onMounted, onBeforeUpdate } from 'vue';
 import * as protobuf from 'protobufjs';
 import { Buffer } from 'buffer';
+import Long from "long";
+
+/* let blobSize = ref(1024); */
+
+/* function sendBlob(e) { */
+  /* console.log(blobSize); */
+  /* const blob = new Uint8Array(ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data.buffer, 0, blobSize.value); */
+  /* socket.send(blob); */
+  /* console.log(blob.byteLength, ' bytes sent'); */
+/* } */
 
 let myroom = ref('');
 const can = ref(null);
@@ -12,16 +22,19 @@ let isMouseDown = false;
 /** @type {WebSocket | null} */
 let socket = null;
 let myid = null;
-/* let myroom = null; */
 let points = [];
 
 // id -> brushKind.
 let playersBrushes = new Map();
-const prevPoints = new Map();
+let prevPoints = new Map();
+let roomOwner = null;
+let nextLogIndex = null;
+
 let brushStack = [];
 
 let ClientMessage = null;
 let InitClient = null;
+let Snapshot = null;
 // let Uid = null;
 let JoinRoom = null;
 let Brush = null;
@@ -97,7 +110,7 @@ function onBrushWidthChange(event) {
 function onRoomChange(event) {
   const joinRoom = {
     id: myid,
-    room: event.target.value,
+    roomId: event.target.value,
   };
   const clientMessage = {
     joinRoom: joinRoom,
@@ -127,8 +140,8 @@ function connectWs() {
       .then((buf) => new Uint8Array(buf))
       .then((bytes) => {
         const clientMsg = ClientMessage.decode(bytes);
-        console.log('Received client message: ');
-        console.log(clientMsg);
+        /* console.log('Received client message: '); */
+        /* console.log(clientMsg); */
         handleClientMessage(clientMsg);
       })
       .catch((error) => {
@@ -137,13 +150,20 @@ function connectWs() {
       });
   };
 
-  socket.onclose = () => {
+  socket.onerror = (e) => {
+    console.log('WebSocket error: ', e);
+  };
+
+  socket.onclose = (e) => {
     console.log('Disconnected');
+    console.log('Close event: ', e);
     socket = null;
   };
 }
 
 function initProtobuf() {
+  protobuf.util.Long = Long;
+  protobuf.configure();
   let protoFile = './messages.proto';
   protobuf.load(protoFile, function (err, root) {
     if (err) throw err;
@@ -151,13 +171,14 @@ function initProtobuf() {
     // Obtain a message type
     ClientMessage = root.lookupType('artplace.messages.ClientMessage');
     InitClient = root.lookupType('artplace.messages.InitClient');
+    Snapshot = root.lookupType('artplace.messages.Snapshot');
     // Uid = root.lookupType('artplace.messages.Uid');
     Brush = root.lookupType('artplace.messages.Brush');
     PencilBrush = root.lookupType('artplace.messages.PencilBrush');
     SetBrush = root.lookupType('artplace.messages.SetBrush');
     Movement = root.lookupType('artplace.messages.Movement');
     JoinRoom = root.lookupType('artplace.messages.JoinRoom');
-    Pos = root.lookupType('artplace.messages.Movement.Pos');
+    Pos = root.lookupType('artplace.messages.Pos');
   });
 }
 
@@ -191,17 +212,86 @@ function pointDrawer(movement) {
   prevPoints.set(movement.id, movement.point);
 }
 
+function applySnapshot(snapshot) {
+  const u8Data = new Uint8ClampedArray(snapshot.bitmap.buffer);
+  const imageData = new ImageData(u8Data, ctx.canvas.width, ctx.canvas.height);
+  ctx.putImageData(imageData, 0, 0);
+
+  playersBrushes = snapshot.brushes;
+  prevPoints = snapshot.prevPoints;
+  if (snapshot.roomOwner) {
+    roomOwner = snapshot.roomOwner;
+  }
+  nextLogIndex = snapshot.nextLogIndex;
+}
+
+function createSnapshot() {
+  const u8Data = new Uint8Array(ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data.buffer);
+  console.log('size of canvas: ' ,u8Data.byteLength);
+  const snapshot = {
+    bitmap: u8Data,
+    prevPoints: prevPoints,
+    roomOwner: roomOwner,
+    nextLogIndex: nextLogIndex
+  };
+  return snapshot;
+}
+
+
+function tryBeRoomOwner() {
+  if (!roomOwner) {
+    const ownerCandidate = {
+      id: myid,
+      roomId: myroom.value,
+      chosen: false
+    };
+    const clientMessage = {
+      ownerCandidate: ownerCandidate
+    };
+    socket.send(
+      ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
+    );
+  }
+}
+
+function increaseLogIndexAndCheckSnapshot() {
+  /* console.log(nextLogIndex); */
+  nextLogIndex++;
+  // Check whether do I need to snapshot.
+  // Need to calculate a proper number.
+  // BUG: websocket met payload size limit of 64KiB.
+  /* if (roomOwner == myid && nextLogIndex % 1000 == 0) { */
+    /* console.log("Creating snapshot") */
+    /* const snapshot = createSnapshot(); */
+    /* const clientMessage = { */
+      /* snapshot: snapshot */
+    /* }; */
+    /* const payload = ClientMessage.encode(ClientMessage.create(clientMessage)).finish(); */
+    /* console.log('snapshot size in bytes: ', payload.byteLength); */
+    /* socket.send(payload); */
+    /* console.log("Snapshot sent") */
+  /* } */
+}
+
 function handleClientMessage(msg) {
   if (msg.initClient) {
+    console.log(msg.initClient);
     // Clear the canvas
     ctx.clearRect(0, 0, can.value.width, can.value.height);
     // Rerender?
 
+    // Init room state.
     playersBrushes = new Map();
+    prevPoints = new Map();
+    roomOwner = null;
+    nextLogIndex = 0;
     myid = msg.initClient.id;
-    myroom.value = msg.initClient.room;
+    myroom.value = msg.initClient.roomId;
     console.log('I have id: ', myid);
-    msg.initClient.messages.forEach((m) => handleClientMessage(m));
+    if (msg.initClient.snapshot) {
+      applySnapshot(msg.initClient.snapshot);
+    }
+    msg.initClient.log.forEach((m) => handleClientMessage(m));
 
     // set my brush for this room
     const setBrush = {
@@ -219,12 +309,20 @@ function handleClientMessage(msg) {
     initDone = true;
   } else if (msg.setBrush) {
     playersBrushes.set(msg.setBrush.id, msg.setBrush.brush);
+    increaseLogIndexAndCheckSnapshot();
   } else if (msg.movement) {
     // use local rendering to reduce tangible latency. (Will cause conflicts, different results shown to different drawers).
     if (myid != msg.movement.id) {
       pointDrawer(msg.movement);
     }
+    increaseLogIndexAndCheckSnapshot();
   } else if (msg.joinRoom) {
+    increaseLogIndexAndCheckSnapshot();
+  } else if (msg.ownerCandidate) {
+    if (msg.ownerCandidate.roomId == myroom.value && msg.ownerCandidate.chosen) {
+      roomOwner = msg.ownerCandidate.id;
+    }
+    increaseLogIndexAndCheckSnapshot();
   }
 }
 
@@ -249,6 +347,7 @@ function pointerEvent2movement(event) {
 }
 
 function sendMovement(movement) {
+  tryBeRoomOwner();
   const clientMessage = {
     movement: movement
   };
@@ -258,7 +357,7 @@ function sendMovement(movement) {
 }
 
 function onPointerDown(event) {
-  console.log(event);
+  /* console.log(event); */
   if (initDone) {
     isMouseDown = true;
 
@@ -317,6 +416,7 @@ onBeforeUpdate(() => {
       type="range"
       min="1"
       max="100"
+      value="1"
       @change="onBrushWidthChange"
     />
     <label for="room">Room:</label>
@@ -332,6 +432,7 @@ onBeforeUpdate(() => {
     @pointerdown="onPointerDown" 
     @pointermove="onPointerMove" 
     @pointerup="onPointerUp" 
+    @pointerout="onPointerUp" 
     style="border: 1px solid #ccc">
   </canvas>
   <p>Where is my canvas?</p>
