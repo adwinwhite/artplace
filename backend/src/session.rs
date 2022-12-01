@@ -18,8 +18,8 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WsClientSession {
     /// unique session id
     // pub id: messages::Uid,
-    pub id: String,
-    pub room_id: String,
+    pub id: Option<String>,
+    pub room_id: Option<String>,
 
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
@@ -41,7 +41,7 @@ impl WsClientSession {
 
                 // notify chat server
                 act.server.do_send(server::Disconnect {
-                    id: act.id.clone(),
+                    id: act.id.clone().unwrap(),
                     room_id: act.room_id.clone(),
                 });
 
@@ -72,7 +72,6 @@ impl Actor for WsClientSession {
         // HttpContext::state() is instance of WsChatSessionState, state is shared
         // across all routes within application
         // log::info!("client {} connected", Uuid::from_u64_pair(self.id.first, self.id.second));
-        log::info!("client {} connected", self.id);
         let client_addr = ctx.address();
         self.server
             .send(server::Connect {
@@ -82,22 +81,21 @@ impl Actor for WsClientSession {
             .into_actor(self)
             .then(|res, act, ctx| {
                 match res {
-                    Ok(init_client) => {
-                        act.room_id = init_client.room_id.clone();
+                    Ok(id) => {
+                        act.id = Some(id.clone());
                         let client_message = messages::ClientMessage {
-                            message_kind: Some(MessageKind::InitClient(init_client)),
+                            message_kind: Some(MessageKind::SetId(
+                                messages::SetId {
+                                    id
+                                }
+                            )),
                         };
-                        // println!("{:#?}", client_message);
                         let bytes = client_message.encode_to_vec();
-                        // let hex : String = bytes.iter()
-                        // .map(|b| format!("{:02x}", b))
-                        // .collect::<Vec<String>>()
-                        // .join("");
-                        // println!("{}", hex);
                         ctx.binary(bytes);
+                    },
+                    Err(_) => {
+                        ctx.stop();
                     }
-                    // something is wrong with chat server
-                    _ => ctx.stop(),
                 }
                 fut::ready(())
             })
@@ -107,7 +105,7 @@ impl Actor for WsClientSession {
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         // notify chat server
         self.server.do_send(server::Disconnect {
-            id: self.id.clone(),
+            id: self.id.clone().unwrap(),
             room_id: self.room_id.clone(),
         });
         Running::Stop
@@ -152,7 +150,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                     {
                         self.server
                             .send(server::Join {
-                                id: self.id.clone(),
+                                id: self.id.clone().unwrap(),
                                 old: self.room_id.clone(),
                                 new: join_room.room_id.clone(),
                             })
@@ -160,7 +158,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                             .then(|res, act, ctx| {
                                 match res {
                                     Ok(init_client) => {
-                                        act.room_id = init_client.room_id.clone();
+                                        act.room_id = Some(init_client.room_id.clone());
                                         let client_message = messages::ClientMessage {
                                             message_kind: Some(MessageKind::InitClient(
                                                 init_client,
@@ -168,24 +166,38 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                                         };
                                         let bytes = client_message.encode_to_vec();
                                         ctx.binary(bytes);
+
+                                        // Add to overlay server log.
+                                        act.server.do_send(server::OverlayClientMessage {
+                                            room: act.room_id.clone().unwrap(),
+                                            msg: messages::ClientMessage {
+                                                message_kind: Some(MessageKind::JoinRoom(
+                                                    messages::JoinRoom {
+                                                        id: act.id.clone().unwrap(),
+                                                        room_id: act.room_id.clone()
+                                                    }
+                                                ))
+                                            }
+                                        });
                                     }
                                     _ => ctx.stop(),
                                 }
                                 fut::ready(())
                             })
                             .wait(ctx);
+                    } else {
+                        self.server.do_send(server::OverlayClientMessage {
+                            room: self.room_id.clone().unwrap(),
+                            msg: client_msg,
+                        });
                     }
-                    self.server.do_send(server::OverlayClientMessage {
-                        room: self.room_id.clone(),
-                        msg: client_msg,
-                    });
                 }
                 Err(err) => {
                     log::error!("failed to decode client message: {}", err);
                 }
             },
             ws::Message::Close(reason) => {
-                log::info!("Client {} disconnected for reason: {:#?}", self.id, reason);
+                log::info!("Client {:#?} disconnected for reason: {:#?}", self.id, reason);
                 ctx.close(reason);
                 ctx.stop();
             }

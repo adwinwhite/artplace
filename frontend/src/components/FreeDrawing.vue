@@ -4,14 +4,8 @@ import * as protobuf from 'protobufjs';
 import { Buffer } from 'buffer';
 import Long from "long";
 
-/* let blobSize = ref(1024); */
-
-/* function sendBlob(e) { */
-  /* console.log(blobSize); */
-  /* const blob = new Uint8Array(ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data.buffer, 0, blobSize.value); */
-  /* socket.send(blob); */
-  /* console.log(blob.byteLength, ' bytes sent'); */
-/* } */
+let shareUrl = ref('');
+let myurl = null;
 
 let myroom = ref('');
 const can = ref(null);
@@ -107,10 +101,10 @@ function onBrushWidthChange(event) {
   playersBrushes.set(myid, brush);
 }
 
-function onRoomChange(event) {
+function joinRoom(room) {
   const joinRoom = {
     id: myid,
-    roomId: event.target.value,
+    roomId: room
   };
   const clientMessage = {
     joinRoom: joinRoom,
@@ -120,11 +114,15 @@ function onRoomChange(event) {
   );
 }
 
+function onRoomChange(event) {
+  joinRoom(event.target.value)
+}
+
 function connectWs() {
   // const { location } = window
 
-  // const proto = location.protocol.startsWith('https') ? 'wss' : 'ws'
-  // const wsUri = `${proto}://${location.host}/ws`
+  // const proto = location.protocol.startsWith('https') ? 'wss' : 'ws' 
+  // const wsUri = `${proto}://${location.host}/ws` 
   const wsUri = 'wss://www.adwin.icu/ws';
 
   console.log('Connecting...');
@@ -152,12 +150,13 @@ function connectWs() {
 
   socket.onerror = (e) => {
     console.log('WebSocket error: ', e);
+    socket = null;
   };
 
   socket.onclose = (e) => {
     console.log('Disconnected');
     console.log('Close event: ', e);
-    socket = null;
+    /* socket = null; */
   };
 }
 
@@ -317,12 +316,27 @@ function handleClientMessage(msg) {
     }
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.joinRoom) {
+    if (msg.joinRoom.id == myid) {
+      myurl.searchParams.set('room', msg.joinRoom.roomId);
+      window.history.pushState(null, '', myurl.toString());
+      shareUrl.value = window.location.href
+    }
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.ownerCandidate) {
     if (msg.ownerCandidate.roomId == myroom.value && msg.ownerCandidate.chosen) {
       roomOwner = msg.ownerCandidate.id;
     }
     increaseLogIndexAndCheckSnapshot();
+  } else if (msg.setId) {
+    myid = msg.setId.id;
+
+    // Join a room
+    myurl = new URL(window.location);
+    let room = null;
+    if (myurl.searchParams.has('room')) {
+      room = myurl.searchParams.get('room');
+    }
+    joinRoom(room);
   }
 }
 
@@ -404,6 +418,7 @@ onBeforeUpdate(() => {
     connectWs();
   }
 });
+
 </script>
 
 <template>
@@ -435,6 +450,7 @@ onBeforeUpdate(() => {
     @pointerout="onPointerUp" 
     style="border: 1px solid #ccc">
   </canvas>
+  <p>{{ shareUrl }} </p>
   <p>Where is my canvas?</p>
 </template>
 

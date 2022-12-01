@@ -26,19 +26,8 @@ async fn accept_client(
 ) -> Result<HttpResponse, Error> {
     ws::WsResponseBuilder::new(
         session::WsClientSession {
-            id: {
-                // let uuid_u64_pair = Uuid::new_v4().as_u64_pair();
-                // messages::Uid {
-                    // first: uuid_u64_pair.0,
-                    // second: uuid_u64_pair.1,
-                // }
-                // messages::Uid {
-                    // first: 13956278896965799043,
-                    // second: 9128467882299892980,
-                // }
-                Uuid::new_v4().as_hyphenated().to_string()
-            },
-            room_id: "".to_owned(),
+            id: None,
+            room_id: None,
             hb: Instant::now(),
             server: srv.get_ref().clone(),
         },

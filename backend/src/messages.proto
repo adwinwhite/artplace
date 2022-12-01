@@ -43,7 +43,7 @@ message Movement {
 
 message JoinRoom {
     required string id = 1;
-    required string roomId = 2;
+    optional string roomId = 2;
 }
 
 message Snapshot {
@@ -60,6 +60,10 @@ message OwnerCandidate {
     required bool chosen = 3;
 }
 
+message SetId {
+    required string id = 1;
+}
+
 // InitClient and Snapshot won't be logged.
 message ClientMessage {
     oneof messageKind {
@@ -71,6 +75,7 @@ message ClientMessage {
         // Server only sends snapshot included in initClient.
         Snapshot snapshot = 5;
         OwnerCandidate ownerCandidate = 6;
+        SetId setId = 7;
     }
 }
 

@@ -7,15 +7,16 @@ use artplace::messages::client_message::MessageKind;
 
 use actix::prelude::*;
 use rand::random;
+use uuid::Uuid;
 
 
 pub type RoomId = String;
 pub type Uid = String;
 
 #[derive(Message)]
-#[rtype(InitClient)]
+#[rtype(Uid)]
 pub struct Connect {
-    pub id: Uid,
+    pub id: Option<Uid>,
     pub addr: Recipient<ClientMessage>,
 }
 
@@ -23,15 +24,15 @@ pub struct Connect {
 #[rtype(result = "()")]
 pub struct Disconnect {
     pub id: Uid,
-    pub room_id: RoomId,
+    pub room_id: Option<RoomId>,
 }
 
 #[derive(Message)]
 #[rtype(InitClient)]
 pub struct Join {
     pub id: Uid,
-    pub old: RoomId,
-    pub new: RoomId,
+    pub old: Option<RoomId>,
+    pub new: Option<RoomId>,
 }
 
 #[derive(Message)]
@@ -90,19 +91,13 @@ impl Actor for OverlayServer {
 
 
 impl Handler<Connect> for OverlayServer {
-    type Result = InitClient;
+    type Result = Uid;
 
     fn handle(&mut self, msg: Connect, _: &mut Context<Self>) -> Self::Result {
-        self.sessions.insert(msg.id.clone(), msg.addr);
-        let room_id = (random::<u8>() % 5 + 1).to_string();
-        let room_state = self.rooms.entry(room_id.clone()).or_default();
-        room_state.users.insert(msg.id.clone());
-        InitClient {
-            id: msg.id,
-            room_id,
-            snapshot: room_state.snapshot.clone(),
-            log: room_state.log.clone(),
-        }
+        let id = msg.id.unwrap_or(Uuid::new_v4().as_hyphenated().to_string());
+        log::info!("Client {} disconnected", id);
+        self.sessions.insert(id.clone(), msg.addr);
+        id
     }
 }
 
@@ -111,7 +106,9 @@ impl Handler<Disconnect> for OverlayServer {
 
     fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
         self.sessions.remove(&msg.id);
-        self.leave_room(&msg.room_id, &msg.id);
+        if let Some(room) = msg.room_id {
+            self.leave_room(&room, &msg.id);
+        }
         log::info!("Client {} disconnected", msg.id);
     }
 }
@@ -120,13 +117,25 @@ impl Handler<Join> for OverlayServer {
     type Result = InitClient;
 
     fn handle(&mut self, msg: Join, _: &mut Context<Self>) -> Self::Result {
-        self.leave_room(&msg.old, &msg.id);
-        self.rooms.entry(msg.new.clone()).or_default().users.insert(msg.id.clone());
-        let new_room_state = self.rooms.entry(msg.new.clone()).or_default();
+        // let room_id = (random::<u8>() % 5 + 1).to_string();
+        // let room_state = self.rooms.entry(room_id.clone()).or_default();
+        // room_state.users.insert(msg.id.clone());
+        // InitClient {
+            // id: msg.id,
+            // room_id,
+            // snapshot: room_state.snapshot.clone(),
+            // log: room_state.log.clone(),
+        // }
+        if let Some(old_room) = msg.old {
+            self.leave_room(&old_room, &msg.id);
+        }
+        let new_room = msg.new.unwrap_or((random::<u8>() % 5 + 1).to_string());
+        self.rooms.entry(new_room.clone()).or_default().users.insert(msg.id.clone());
+        let new_room_state = self.rooms.entry(new_room.clone()).or_default();
         new_room_state.users.insert(msg.id.clone());
         InitClient {
             id: msg.id,
-            room_id: msg.new,
+            room_id: new_room,
             snapshot: new_room_state.snapshot.clone(),
             log: new_room_state.log.clone(),
         }
