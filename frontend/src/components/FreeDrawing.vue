@@ -21,16 +21,17 @@ let points = [];
 // id -> brushKind.
 let playersBrushes = new Map();
 let prevPoints = new Map();
-let roomOwner = null;
+let snapper = null;
 let nextLogIndex = null;
 
 let brushStack = [];
 
 let ClientMessage = null;
-let InitClient = null;
+let ServerMessage = null;
+let RoomInit = null;
 let Snapshot = null;
 // let Uid = null;
-let JoinRoom = null;
+/* let JoinRoom = null; */
 let Brush = null;
 let PencilBrush = null;
 let SetBrush = null;
@@ -65,16 +66,7 @@ function onBrushColorChange(event) {
     },
   };
 
-  const setBrush = {
-    id: myid,
-    brush: brush
-  };
-  const clientMessage = {
-    setBrush: setBrush,
-  };
-  socket.send(
-    ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
-  );
+  sendBrush(brush);
 
   playersBrushes.set(myid, brush);
 }
@@ -87,23 +79,15 @@ function onBrushWidthChange(event) {
     },
   };
 
-  const setBrush = {
-    id: myid,
-    brush: brush
-  };
-  const clientMessage = {
-    setBrush: setBrush,
-  };
-  socket.send(
-    ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
-  );
+  sendBrush(brush);
 
   playersBrushes.set(myid, brush);
 }
 
 function joinRoom(room) {
+  console.log('joining room: ', room);
+  initDone = false;
   const joinRoom = {
-    id: myid,
     roomId: room
   };
   const clientMessage = {
@@ -137,10 +121,10 @@ function connectWs() {
       .arrayBuffer()
       .then((buf) => new Uint8Array(buf))
       .then((bytes) => {
-        const clientMsg = ClientMessage.decode(bytes);
+        const serverMsg = ServerMessage.decode(bytes);
         /* console.log('Received client message: '); */
         /* console.log(clientMsg); */
-        handleClientMessage(clientMsg);
+        handleServerMessage(serverMsg);
       })
       .catch((error) => {
         // ...handle/report error...
@@ -168,16 +152,15 @@ function initProtobuf() {
     if (err) throw err;
 
     // Obtain a message type
-    ClientMessage = root.lookupType('artplace.messages.ClientMessage');
-    InitClient = root.lookupType('artplace.messages.InitClient');
-    Snapshot = root.lookupType('artplace.messages.Snapshot');
-    // Uid = root.lookupType('artplace.messages.Uid');
-    Brush = root.lookupType('artplace.messages.Brush');
-    PencilBrush = root.lookupType('artplace.messages.PencilBrush');
-    SetBrush = root.lookupType('artplace.messages.SetBrush');
-    Movement = root.lookupType('artplace.messages.Movement');
-    JoinRoom = root.lookupType('artplace.messages.JoinRoom');
-    Pos = root.lookupType('artplace.messages.Pos');
+    ClientMessage = root.lookupType('artplace.wsmsg.ClientMessage');
+    ServerMessage = root.lookupType('artplace.wsmsg.ServerMessage');
+    RoomInit = root.lookupType('artplace.wsmsg.RoomInit');
+    Snapshot = root.lookupType('artplace.wsmsg.Snapshot');
+    // Uid = root.lookupType('artplace.wsmsg.Uid');
+    Brush = root.lookupType('artplace.wsmsg.Brush');
+    PencilBrush = root.lookupType('artplace.wsmsg.PencilBrush');
+    SetBrush = root.lookupType('artplace.wsmsg.SetBrush');
+    Movement = root.lookupType('artplace.wsmsg.Movement');
   });
 }
 
@@ -218,8 +201,8 @@ function applySnapshot(snapshot) {
 
   playersBrushes = snapshot.brushes;
   prevPoints = snapshot.prevPoints;
-  if (snapshot.roomOwner) {
-    roomOwner = snapshot.roomOwner;
+  if (snapshot.snapper) {
+    snapper = snapshot.snapper;
   }
   nextLogIndex = snapshot.nextLogIndex;
 }
@@ -230,22 +213,17 @@ function createSnapshot() {
   const snapshot = {
     bitmap: u8Data,
     prevPoints: prevPoints,
-    roomOwner: roomOwner,
+    snapper: snapper,
     nextLogIndex: nextLogIndex
   };
   return snapshot;
 }
 
 
-function tryBeRoomOwner() {
-  if (!roomOwner) {
-    const ownerCandidate = {
-      id: myid,
-      roomId: myroom.value,
-      chosen: false
-    };
+function tryBeSnapper() {
+  if (!snapper) {
     const clientMessage = {
-      ownerCandidate: ownerCandidate
+      snapperRequest: {}
     };
     socket.send(
       ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
@@ -259,7 +237,7 @@ function increaseLogIndexAndCheckSnapshot() {
   // Check whether do I need to snapshot.
   // Need to calculate a proper number.
   // BUG: websocket met payload size limit of 64KiB.
-  /* if (roomOwner == myid && nextLogIndex % 1000 == 0) { */
+  /* if (snapper == myid && nextLogIndex % 1000 == 0) { */
     /* console.log("Creating snapshot") */
     /* const snapshot = createSnapshot(); */
     /* const clientMessage = { */
@@ -272,9 +250,9 @@ function increaseLogIndexAndCheckSnapshot() {
   /* } */
 }
 
-function handleClientMessage(msg) {
-  if (msg.initClient) {
-    console.log(msg.initClient);
+function handleServerMessage(msg) {
+  if (msg.roomInit) {
+    console.log(msg.roomInit);
     // Clear the canvas
     ctx.clearRect(0, 0, can.value.width, can.value.height);
     // Rerender?
@@ -282,27 +260,21 @@ function handleClientMessage(msg) {
     // Init room state.
     playersBrushes = new Map();
     prevPoints = new Map();
-    roomOwner = null;
+    snapper = null;
     nextLogIndex = 0;
-    myid = msg.initClient.id;
-    myroom.value = msg.initClient.roomId;
-    console.log('I have id: ', myid);
-    if (msg.initClient.snapshot) {
-      applySnapshot(msg.initClient.snapshot);
+    myroom.value = msg.roomInit.roomId;
+    if (msg.roomInit.snapshot) {
+      applySnapshot(msg.roomInit.snapshot);
     }
-    msg.initClient.log.forEach((m) => handleClientMessage(m));
+    msg.roomInit.log.forEach((m) => handleServerMessage(m));
 
     // set my brush for this room
-    const setBrush = {
-      id: myid,
-      brush: getBrush(myid)
-    };
-    const clientMessage = {
-      setBrush: setBrush,
-    };
-    socket.send(
-      ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
-    );
+    sendBrush(getBrush(myid));
+
+    // Update url.
+    myurl.searchParams.set('room', msg.roomInit.roomId);
+    window.history.pushState(null, '', myurl.toString());
+    shareUrl.value = window.location.href
 
     // after initialization, allow drawing.
     initDone = true;
@@ -316,19 +288,13 @@ function handleClientMessage(msg) {
     }
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.joinRoom) {
-    if (msg.joinRoom.id == myid) {
-      myurl.searchParams.set('room', msg.joinRoom.roomId);
-      window.history.pushState(null, '', myurl.toString());
-      shareUrl.value = window.location.href
-    }
     increaseLogIndexAndCheckSnapshot();
-  } else if (msg.ownerCandidate) {
-    if (msg.ownerCandidate.roomId == myroom.value && msg.ownerCandidate.chosen) {
-      roomOwner = msg.ownerCandidate.id;
-    }
+  } else if (msg.setSnapper) {
+    snapper = msg.setSnapper.id;
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.setId) {
     myid = msg.setId.id;
+    console.log('I have id: ' + myid);
 
     // Join a room
     myurl = new URL(window.location);
@@ -337,6 +303,14 @@ function handleClientMessage(msg) {
       room = myurl.searchParams.get('room');
     }
     joinRoom(room);
+  } else if (msg.leaveRoom) {
+    console.log(msg.leaveRoom.id, 'left room');
+    if (snapper == msg.leaveRoom.id) {
+      snapper = null;
+    }
+    increaseLogIndexAndCheckSnapshot();
+  } else if (msg.serverError) {
+    console.log('server has error: ', msg.serverError);
   }
 }
 
@@ -350,7 +324,6 @@ function pointerEvent2movement(event) {
     kind = 2;
   }
   const movement = {
-    id: myid,
     point: {
       x: event.offsetX,
       y: event.offsetY
@@ -360,8 +333,19 @@ function pointerEvent2movement(event) {
   return movement;
 }
 
+function sendBrush(brush) {
+  const clientMessage = {
+    setBrush: {
+      brush: brush
+    }
+  };
+  socket.send(
+    ClientMessage.encode(ClientMessage.create(clientMessage)).finish()
+  );
+}
+
 function sendMovement(movement) {
-  tryBeRoomOwner();
+  tryBeSnapper();
   const clientMessage = {
     movement: movement
   };

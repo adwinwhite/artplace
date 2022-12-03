@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
 use crate::server;
-use artplace::messages;
-use artplace::messages::client_message::MessageKind;
+use artplace::wsmsg;
+use artplace::wsmsg::client_message::Kind as ClientKind;
+use artplace::wsmsg::server_message::Kind as ServerKind;
 
 use actix::prelude::*;
 use actix_web_actors::ws;
@@ -42,7 +43,7 @@ impl WsClientSession {
                 // notify chat server
                 act.server.do_send(server::Disconnect {
                     id: act.id.clone().unwrap(),
-                    room_id: act.room_id.clone(),
+                    room_id: act.room_id.clone()
                 });
 
                 // stop actor
@@ -83,16 +84,12 @@ impl Actor for WsClientSession {
                 match res {
                     Ok(id) => {
                         act.id = Some(id.clone());
-                        let client_message = messages::ClientMessage {
-                            message_kind: Some(MessageKind::SetId(
-                                messages::SetId {
-                                    id
-                                }
-                            )),
+                        let server_message = wsmsg::ServerMessage {
+                            kind: Some(ServerKind::SetId(wsmsg::SetId { id })),
                         };
-                        let bytes = client_message.encode_to_vec();
+                        let bytes = server_message.encode_to_vec();
                         ctx.binary(bytes);
-                    },
+                    }
                     Err(_) => {
                         ctx.stop();
                     }
@@ -106,17 +103,17 @@ impl Actor for WsClientSession {
         // notify chat server
         self.server.do_send(server::Disconnect {
             id: self.id.clone().unwrap(),
-            room_id: self.room_id.clone(),
+            room_id: self.room_id.clone()
         });
         Running::Stop
     }
 }
 
 /// Handle messages from chat server, we simply send it to peer websocket
-impl Handler<messages::ClientMessage> for WsClientSession {
+impl Handler<wsmsg::ServerMessage> for WsClientSession {
     type Result = ();
 
-    fn handle(&mut self, msg: messages::ClientMessage, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: wsmsg::ServerMessage, ctx: &mut Self::Context) {
         ctx.binary(msg.encode_to_vec())
     }
 }
@@ -142,54 +139,90 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                 self.hb = Instant::now();
             }
             ws::Message::Text(_) => println!("Unexpected text"),
-            ws::Message::Binary(bin) => match messages::ClientMessage::decode(bin) {
+            ws::Message::Binary(bin) => match wsmsg::ClientMessage::decode(bin) {
                 Ok(client_msg) => {
                     // log::info!("received client message: {:#?}", client_msg);
-                    if let Some(messages::client_message::MessageKind::JoinRoom(join_room)) =
-                        &client_msg.message_kind
-                    {
-                        self.server
-                            .send(server::Join {
+                    match client_msg.kind.unwrap() {
+                        ClientKind::SetBrush(set_brush) => {
+                            if let Err(err) = self.server.try_send(server::SetBrush {
                                 id: self.id.clone().unwrap(),
-                                old: self.room_id.clone(),
-                                new: join_room.room_id.clone(),
-                            })
-                            .into_actor(self)
-                            .then(|res, act, ctx| {
-                                match res {
-                                    Ok(init_client) => {
-                                        act.room_id = Some(init_client.room_id.clone());
-                                        let client_message = messages::ClientMessage {
-                                            message_kind: Some(MessageKind::InitClient(
-                                                init_client,
-                                            )),
-                                        };
-                                        let bytes = client_message.encode_to_vec();
-                                        ctx.binary(bytes);
-
-                                        // Add to overlay server log.
-                                        act.server.do_send(server::OverlayClientMessage {
-                                            room: act.room_id.clone().unwrap(),
-                                            msg: messages::ClientMessage {
-                                                message_kind: Some(MessageKind::JoinRoom(
-                                                    messages::JoinRoom {
-                                                        id: act.id.clone().unwrap(),
-                                                        room_id: act.room_id.clone()
-                                                    }
-                                                ))
-                                            }
-                                        });
+                                room_id: self.room_id.clone().unwrap(),
+                                set_brush,
+                            }) {
+                                ctx.binary(
+                                    (wsmsg::ServerMessage {
+                                        kind: Some(ServerKind::ServerError(err.to_string())),
+                                    })
+                                    .encode_to_vec(),
+                                );
+                            }
+                        }
+                        ClientKind::Movement(movement) => {
+                            if let Err(err) = self.server.try_send(server::Movement {
+                                id: self.id.clone().unwrap(),
+                                room_id: self.room_id.clone().unwrap(),
+                                movement,
+                            }) {
+                                ctx.binary(
+                                    (wsmsg::ServerMessage {
+                                        kind: Some(ServerKind::ServerError(err.to_string())),
+                                    })
+                                    .encode_to_vec(),
+                                );
+                            }
+                        }
+                        ClientKind::JoinRoom(join_room) => {
+                            self.server
+                                .send(server::JoinRoom {
+                                    id: self.id.clone().unwrap(),
+                                    room_id: self.room_id.clone(),
+                                    join_room,
+                                })
+                                .into_actor(self)
+                                .then(|res, act, ctx| {
+                                    match res {
+                                        Ok(room_init) => {
+                                            act.room_id = Some(room_init.room_id.clone());
+                                            let server_message = wsmsg::ServerMessage {
+                                                kind: Some(ServerKind::RoomInit(room_init)),
+                                            };
+                                            let bytes = server_message.encode_to_vec();
+                                            ctx.binary(bytes);
+                                        }
+                                        _ => ctx.stop(),
                                     }
-                                    _ => ctx.stop(),
-                                }
-                                fut::ready(())
-                            })
-                            .wait(ctx);
-                    } else {
-                        self.server.do_send(server::OverlayClientMessage {
-                            room: self.room_id.clone().unwrap(),
-                            msg: client_msg,
-                        });
+                                    fut::ready(())
+                                })
+                                .wait(ctx);
+                        }
+                        ClientKind::Snapshot(snapshot) => {
+                            if let Err(err) = self.server.try_send(server::Snapshot {
+                                id: self.id.clone().unwrap(),
+                                room_id: self.room_id.clone().unwrap(),
+                                snapshot,
+                            }) {
+                                ctx.binary(
+                                    (wsmsg::ServerMessage {
+                                        kind: Some(ServerKind::ServerError(err.to_string())),
+                                    })
+                                    .encode_to_vec(),
+                                );
+                            }
+                        }
+                        ClientKind::SnapperRequest(snapper_request) => {
+                            if let Err(err) = self.server.try_send(server::SnapperRequest {
+                                id: self.id.clone().unwrap(),
+                                room_id: self.room_id.clone().unwrap(),
+                                snapper_request,
+                            }) {
+                                ctx.binary(
+                                    (wsmsg::ServerMessage {
+                                        kind: Some(ServerKind::ServerError(err.to_string())),
+                                    })
+                                    .encode_to_vec(),
+                                );
+                            }
+                        }
                     }
                 }
                 Err(err) => {
@@ -197,7 +230,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                 }
             },
             ws::Message::Close(reason) => {
-                log::info!("Client {:#?} disconnected for reason: {:#?}", self.id, reason);
+                log::info!(
+                    "Client {:#?} disconnected for reason: {:#?}",
+                    self.id,
+                    reason
+                );
                 ctx.close(reason);
                 ctx.stop();
             }

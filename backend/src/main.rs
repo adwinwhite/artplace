@@ -9,7 +9,6 @@ use actix_web_actors::ws;
 use actix::*;
 use serde::Deserialize;
 
-use uuid::Uuid;
 
 mod server;
 mod session;

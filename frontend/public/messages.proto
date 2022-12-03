@@ -1,6 +1,6 @@
 syntax = "proto2";
 
-package artplace.messages;
+package artplace.wsmsg;
 
 
 message Brush {
@@ -19,70 +19,94 @@ message Brush {
     // required uint64 second = 2;
 // }
 
-message SetBrush {
-    required string id = 1;
-    required Brush brush = 2;
-}
 
 message Pos {
     required double x = 1;
     required double y = 2;
 }
 
-message Movement {
-    enum MoveKind {
-        BRUSH_DOWN = 0;
-        BRUSH_MOVE = 1;
-        BRUSH_UP = 2;
-    }
-
-    required string id = 1;
-    required Pos point = 2;
-    required MoveKind kind = 3;
+enum MoveKind {
+    BRUSH_DOWN = 0;
+    BRUSH_MOVE = 1;
+    BRUSH_UP = 2;
 }
 
-message JoinRoom {
+
+message LeaveRoom {
     required string id = 1;
-    optional string roomId = 2;
 }
 
 message Snapshot {
     required bytes bitmap = 1;
     map<string, Brush> brushes = 2;
     map<string, Pos> prevPoints = 3;
-    optional string roomOwner = 4;
+    optional string snapper = 4;
     required uint64 nextLogIndex = 5;
 }
 
-message OwnerCandidate {
+message SnapperRequest {
+}
+
+message SetSnapper {
     required string id = 1;
-    required string roomId = 2;
-    required bool chosen = 3;
 }
 
 message SetId {
     required string id = 1;
 }
 
-// InitClient and Snapshot won't be logged.
+// Client will obtain bitmap, brushes, prevPoints, snapper and nextLogIndex from log&snapshot.
+message RoomInit {
+    required string roomId = 1;
+    optional Snapshot snapshot = 2;
+    repeated ServerMessage log = 3;
+}
+
+// Messages from client
 message ClientMessage {
-    oneof messageKind {
+    message JoinRoom {
+        optional string roomId = 1;
+    }
+    message SetBrush {
+        required Brush brush = 1;
+    }
+    message Movement {
+        required Pos point = 1;
+        required MoveKind kind = 2;
+    }
+    oneof kind {
         SetBrush setBrush = 1;
         Movement movement = 2;
-        // Only sent by server.
-        InitClient initClient = 3;
+        JoinRoom joinRoom = 3;
+        Snapshot snapshot = 4;
+        SnapperRequest snapperRequest = 5;
+    }
+}
+
+// Messages from server
+message ServerMessage {
+    message JoinRoom {
+        required string id = 1;
+    }
+    message SetBrush {
+        required string id = 1;
+        required Brush brush = 2;
+    }
+    message Movement {
+        required string id = 1;
+        required Pos point = 2;
+        required MoveKind kind = 3;
+    }
+    oneof kind {
+        SetBrush setBrush = 1;
+        Movement movement = 2;
+        RoomInit roomInit = 3;
         JoinRoom joinRoom = 4;
-        // Server only sends snapshot included in initClient.
-        Snapshot snapshot = 5;
-        OwnerCandidate ownerCandidate = 6;
-        SetId setId = 7;
+        SetSnapper setSnapper = 5;
+        SetId setId = 6;
+        string serverError = 7;
+        LeaveRoom leaveRoom = 8;
     }
 }
 
 
-message InitClient {
-    required string id = 1;
-    required string roomId = 2;
-    optional Snapshot snapshot = 3;
-    repeated ClientMessage log = 4;
-}

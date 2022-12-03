@@ -1,4 +1,4 @@
-pub mod messages {
-    include!(concat!(env!("OUT_DIR"), "/artplace.messages.rs"));
+pub mod wsmsg {
+    include!(concat!(env!("OUT_DIR"), "/artplace.wsmsg.rs"));
 }
 
