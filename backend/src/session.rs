@@ -43,7 +43,7 @@ impl WsClientSession {
                 // notify chat server
                 act.server.do_send(server::Disconnect {
                     id: act.id.clone().unwrap(),
-                    room_id: act.room_id.clone()
+                    room_id: act.room_id.clone(),
                 });
 
                 // stop actor
@@ -103,7 +103,7 @@ impl Actor for WsClientSession {
         // notify chat server
         self.server.do_send(server::Disconnect {
             id: self.id.clone().unwrap(),
-            room_id: self.room_id.clone()
+            room_id: self.room_id.clone(),
         });
         Running::Stop
     }
@@ -144,32 +144,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                     // log::info!("received client message: {:#?}", client_msg);
                     match client_msg.kind.unwrap() {
                         ClientKind::SetBrush(set_brush) => {
-                            if let Err(err) = self.server.try_send(server::SetBrush {
+                            self.server.do_send(server::SetBrush {
                                 id: self.id.clone().unwrap(),
                                 room_id: self.room_id.clone().unwrap(),
                                 set_brush,
-                            }) {
-                                ctx.binary(
-                                    (wsmsg::ServerMessage {
-                                        kind: Some(ServerKind::ServerError(err.to_string())),
-                                    })
-                                    .encode_to_vec(),
-                                );
-                            }
+                            });
                         }
                         ClientKind::Movement(movement) => {
-                            if let Err(err) = self.server.try_send(server::Movement {
+                            self.server.do_send(server::Movement {
                                 id: self.id.clone().unwrap(),
                                 room_id: self.room_id.clone().unwrap(),
                                 movement,
-                            }) {
-                                ctx.binary(
-                                    (wsmsg::ServerMessage {
-                                        kind: Some(ServerKind::ServerError(err.to_string())),
-                                    })
-                                    .encode_to_vec(),
-                                );
-                            }
+                            });
                         }
                         ClientKind::JoinRoom(join_room) => {
                             self.server
@@ -196,32 +182,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsClientSession {
                                 .wait(ctx);
                         }
                         ClientKind::Snapshot(snapshot) => {
-                            if let Err(err) = self.server.try_send(server::Snapshot {
+                            self.server.do_send(server::Snapshot {
                                 id: self.id.clone().unwrap(),
                                 room_id: self.room_id.clone().unwrap(),
                                 snapshot,
-                            }) {
-                                ctx.binary(
-                                    (wsmsg::ServerMessage {
-                                        kind: Some(ServerKind::ServerError(err.to_string())),
-                                    })
-                                    .encode_to_vec(),
-                                );
-                            }
+                            });
                         }
                         ClientKind::SnapperRequest(snapper_request) => {
-                            if let Err(err) = self.server.try_send(server::SnapperRequest {
+                            self.server.do_send(server::SnapperRequest {
                                 id: self.id.clone().unwrap(),
                                 room_id: self.room_id.clone().unwrap(),
                                 snapper_request,
-                            }) {
-                                ctx.binary(
-                                    (wsmsg::ServerMessage {
-                                        kind: Some(ServerKind::ServerError(err.to_string())),
-                                    })
-                                    .encode_to_vec(),
-                                );
-                            }
+                            });
                         }
                     }
                 }

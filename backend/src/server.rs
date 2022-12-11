@@ -126,6 +126,10 @@ impl OverlayServer {
 
 impl Actor for OverlayServer {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.set_mailbox_capacity(1024);
+    }
 }
 
 

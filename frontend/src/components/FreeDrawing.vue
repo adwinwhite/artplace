@@ -4,6 +4,14 @@ import * as protobuf from 'protobufjs';
 import { Buffer } from 'buffer';
 import Long from "long";
 
+let isViewMode = false;
+let canvasScale = 1;
+let canvasTranslate = {
+  x: 0,
+  y: 0,
+};
+let drawingLog = [];
+
 let shareUrl = ref('');
 let myurl = null;
 
@@ -24,8 +32,6 @@ let prevPoints = new Map();
 let snapper = null;
 let nextLogIndex = null;
 
-let brushStack = [];
-
 let ClientMessage = null;
 let ServerMessage = null;
 let RoomInit = null;
@@ -37,6 +43,30 @@ let PencilBrush = null;
 let SetBrush = null;
 let Movement = null;
 let Pos = null;
+
+function rerender() {
+  ctx.resetTransform();
+  ctx.clearRect(0, 0, can.value.width, can.value.height);
+  ctx.scale(canvasScale, canvasScale);
+  ctx.translate(canvasTranslate.x, canvasTranslate.y);
+
+  // Init room state.
+  playersBrushes = new Map();
+  prevPoints = new Map();
+  drawingLog.forEach((m) => handleServerMessage(m));
+}
+
+function screen2global(x, y) {
+  const gx = x / canvasScale - canvasTranslate.x;
+  const gy = y / canvasScale - canvasTranslate.y;
+  return {gx, gy};
+}
+
+function global2screen(x, y) {
+  const sx = (x + canvasTranslate.x) * canvasScale;
+  const sy = (y + canvasTranslate.y) * canvasScale;
+  return {sx, sy};
+}
 
 function createDefaultBrush() {
   const brush = {
@@ -57,6 +87,21 @@ function getBrush(id) {
   return brush;
 }
 
+function onZoomChange(event) {
+  // save old center position.
+  const {gx, gy} = screen2global(can.value.width / 2, can.value.height / 2);
+
+  canvasScale = event.target.valueAsNumber;
+
+  // restore old center to screen center.
+  canvasTranslate.x = can.value.width / 2 / canvasScale - gx;
+  canvasTranslate.y = can.value.height / 2 / canvasScale - gy;
+  rerender();
+}
+
+function onViewModeChange(event) {
+  isViewMode = event.target.checked;
+}
 
 function onBrushColorChange(event) {
   const brush = {
@@ -70,6 +115,7 @@ function onBrushColorChange(event) {
 
   playersBrushes.set(myid, brush);
 }
+
 
 function onBrushWidthChange(event) {
   const brush = {
@@ -124,6 +170,15 @@ function connectWs() {
         const serverMsg = ServerMessage.decode(bytes);
         /* console.log('Received client message: '); */
         /* console.log(clientMsg); */
+
+        // Add to drawingLog.
+        if (serverMsg.roomInit) {
+          drawingLog = [];
+          serverMsg.roomInit.log.filter(m => m.setBrush || m.movement).forEach(m => drawingLog.push(m));
+        } else if (serverMsg.setBrush || serverMsg.movement) {
+          drawingLog.push(serverMsg);
+        }
+
         handleServerMessage(serverMsg);
       })
       .catch((error) => {
@@ -178,7 +233,13 @@ function pointDrawer(movement) {
     // pointer:move or up
     ctx.save();
 
-    const brush = getBrush(movement.id);
+    let brush = null;
+    if (movement.id) {
+      brush = getBrush(movement.id);
+    } else {
+      // local rendering.
+      brush = getBrush(myid);
+    }
     setBrush(ctx, brush);
     const prevPoint = prevPoints.get(movement.id);
     ctx.beginPath();
@@ -254,7 +315,11 @@ function handleServerMessage(msg) {
   if (msg.roomInit) {
     console.log(msg.roomInit);
     // Clear the canvas
+    ctx.resetTransform();
     ctx.clearRect(0, 0, can.value.width, can.value.height);
+    canvasScale = 1;
+    canvasTranslate.x = 0;
+    canvasTranslate.y = 0;
     // Rerender?
 
     // Init room state.
@@ -267,6 +332,7 @@ function handleServerMessage(msg) {
       applySnapshot(msg.roomInit.snapshot);
     }
     msg.roomInit.log.forEach((m) => handleServerMessage(m));
+
 
     // set my brush for this room
     sendBrush(getBrush(myid));
@@ -283,9 +349,9 @@ function handleServerMessage(msg) {
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.movement) {
     // use local rendering to reduce tangible latency. (Will cause conflicts, different results shown to different drawers).
-    if (myid != msg.movement.id) {
-      pointDrawer(msg.movement);
-    }
+    /* if (myid != msg.movement.id) { */
+    pointDrawer(msg.movement);
+    /* } */
     increaseLogIndexAndCheckSnapshot();
   } else if (msg.joinRoom) {
     increaseLogIndexAndCheckSnapshot();
@@ -323,10 +389,11 @@ function pointerEvent2movement(event) {
   } else if (event.type == 'pointerup') {
     kind = 2;
   }
+  const {gx, gy} = screen2global(event.offsetX, event.offsetY);
   const movement = {
     point: {
-      x: event.offsetX,
-      y: event.offsetY
+      x: gx,
+      y: gy
     },
     kind: kind
   };
@@ -359,39 +426,66 @@ function onPointerDown(event) {
   if (initDone) {
     isMouseDown = true;
 
-    // send message
-    const movement = pointerEvent2movement(event);
-    sendMovement(movement);
-    pointDrawer(movement);
+    if (!isViewMode) {
+      const movement = pointerEvent2movement(event);
+      // render locally first to reduce tangible latency.
+      pointDrawer(movement);
+
+      // send message
+      sendMovement(movement);
+    }
   }
 }
 
 function onPointerMove(event) {
   if (initDone && isMouseDown) {
-    // send message
-    const movement = pointerEvent2movement(event);
-    sendMovement(movement);
-    pointDrawer(movement);
+    if (isViewMode) {
+      canvasTranslate.x += event.movementX / canvasScale;
+      canvasTranslate.y += event.movementY / canvasScale;
+      rerender();
+    } else {
+      const movement = pointerEvent2movement(event);
+      // render locally first to reduce tangible latency.
+      pointDrawer(movement);
+
+      // send message
+      sendMovement(movement);
+    }
   }
 }
 
 function onPointerUp(event) {
   if (initDone && isMouseDown) {
-    // send message
-    const movement = pointerEvent2movement(event);
-    sendMovement(movement);
-    pointDrawer(movement);
+    if (isViewMode) {
+      canvasTranslate.x += event.movementX / canvasScale;
+      canvasTranslate.y += event.movementY / canvasScale;
+      rerender();
+    } else {
+      const movement = pointerEvent2movement(event);
+      // render locally first to reduce tangible latency.
+      pointDrawer(movement);
+
+      // send message
+      sendMovement(movement);
+    }
   }
   isMouseDown = false;
 }
 
 onMounted(() => {
-  can.value.width = 400;
-  can.value.height = 400;
+  /* can.value.width = 400; */
+  /* can.value.height = 400; */
   ctx = can.value.getContext('2d');
 
   can.value.addEventListener("touchmove", (e)=>{ e.preventDefault(); }, {passive: false});
   can.value.addEventListener("touchstart", (e)=>{ e.preventDefault(); }, {passive: false});
+
+  // handle resizing.
+  const observer = new ResizeObserver((entries) => {
+    can.value.width = can.value.clientWidth;
+    can.value.height = window.innerHeight * 0.8;
+  });
+  observer.observe(can.value)
   // // init protobuf and websocket.
   initProtobuf();
   connectWs();
@@ -406,8 +500,17 @@ onBeforeUpdate(() => {
 </script>
 
 <template>
-  <p>Can you see me?</p>
   <form onsubmit="return false">
+    <label for="view-mode">View Mode:</label>
+    <input type="checkbox" id="view-mode" @change="onViewModeChange">
+
+    <label for="zoom">Zoom:</label>
+    <input
+      id="zoom"
+      type="number"
+      @change="onZoomChange"
+    />
+
     <input type="color"  @change="onBrushColorChange" />
     <label for="brush-width">Brush Width:</label>
     <input
@@ -435,7 +538,12 @@ onBeforeUpdate(() => {
     style="border: 1px solid #ccc">
   </canvas>
   <p>{{ shareUrl }} </p>
-  <p>Where is my canvas?</p>
 </template>
 
-<style scoped></style>
+<style scoped>
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+</style>
