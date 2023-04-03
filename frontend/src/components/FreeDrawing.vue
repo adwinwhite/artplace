@@ -11,6 +11,7 @@ let canvasTranslate = {
   y: 0,
 };
 let drawingLog = [];
+let activePointers = new Set();
 
 let shareUrl = ref('');
 let myurl = null;
@@ -423,6 +424,7 @@ function sendMovement(movement) {
 
 function onPointerDown(event) {
   /* console.log(event); */
+  activePointers.add(event.pointerId);
   if (initDone) {
     isMouseDown = true;
 
@@ -439,7 +441,7 @@ function onPointerDown(event) {
 
 function onPointerMove(event) {
   if (initDone && isMouseDown) {
-    if (isViewMode) {
+    if (isViewMode || (activePointers.size >= 2 && event.isPrimary)) {
       canvasTranslate.x += event.movementX / canvasScale;
       canvasTranslate.y += event.movementY / canvasScale;
       rerender();
@@ -455,8 +457,9 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
+  activePointers.delete(event.pointerId);
   if (initDone && isMouseDown) {
-    if (isViewMode) {
+    if (isViewMode || (activePointers.size >= 2 && event.isPrimary)) {
       canvasTranslate.x += event.movementX / canvasScale;
       canvasTranslate.y += event.movementY / canvasScale;
       rerender();
@@ -535,6 +538,8 @@ onBeforeUpdate(() => {
     @pointermove="onPointerMove" 
     @pointerup="onPointerUp" 
     @pointerout="onPointerUp" 
+    @pointerleave="onPointerUp"
+    @pointercancel="onPointerUp"
     style="border: 1px solid #ccc">
   </canvas>
   <p>{{ shareUrl }} </p>
